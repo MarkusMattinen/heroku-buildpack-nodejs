@@ -75,34 +75,6 @@ else
   fi
 fi
 
-mkdir -p $cache_dir/.npm
-mkdir -p $cache_dir/.cache/bower $HOME/.cache
-
-rm -rf $HOME/.npm
-rm -rf $HOME/.cache/bower
-
-if [ "$SYMLINK_CACHES" = "y" ]; then
-  if [ -d $cache_dir/.npm ]; then
-    status "Symlinking npm cache directory to cache"
-    ln -s $cache_dir/.npm $HOME/.npm
-  fi
-
-  if [ -d $cache_dir/.cache/bower ]; then
-    status "Symlinking bower cache directory to cache"
-    ln -s $cache_dir/.cache/bower $HOME/.cache/bower
-  fi
-else
-  if [ -d $cache_dir/.npm ]; then
-    status "Restoring npm cache directory from cache"
-    cp -r $cache_dir/.npm $HOME/.npm
-  fi
-
-  if [ -d $cache_dir/.cache/bower ]; then
-    status "Restoring bower cache directory from cache"
-    cp -r $cache_dir/.cache/bower $HOME/.cache/bower
-  fi
-fi
-
 # Run subsequent node/npm commands from the build path
 cd $build_dir
 
@@ -112,38 +84,6 @@ function cleanup_tmp {
   (shopt -s dotglob; rm -rf $TMPDIR/*)
 }
 trap cleanup_tmp INT TERM EXIT
-
-committed_node_modules_dirs="$(cd "$build_dir" && find . -type d -name node_modules -not -path '*/node_modules/*' -not -path './vendor/*' | cut -c 3-)"
-cached_node_modules_dirs="$(cd "$cache_dir" && find . -type d -name node_modules -not -path '*/node_modules/*' | cut -c 3-)"
-
-# If node_modules directory is checked into source control then
-# rebuild any native deps. Otherwise, restore from the build cache.
-if [ -n "$committed_node_modules_dirs" ]; then
-  echo "$committed_node_modules_dirs" | while read line
-  do
-    status "Found existing node_modules directory $line"
-    status "Rebuilding any native dependencies"
-    pushd "$build_dir/$(dirname "$line")" >/dev/null; npm rebuild 2>&1 | indent; popd >/dev/null
-  done
-fi
-
-if [ -n "$cached_node_modules_dirs" ]; then
-  echo "$cached_node_modules_dirs" | while read line
-  do
-    if [ -f "$build_dir/$(dirname "$line")/package.json" -a ! -d "$build_dir/$line" ]; then
-      if [ "$SYMLINK_CACHES" = "y" ]; then
-        status "Symlinking $line to cache"
-        ln -s "$cache_dir/$line" "$build_dir/$line"
-      else
-        status "Restoring $line from cache"
-        cp -a "$cache_dir/$line" "$build_dir/$line"
-      fi
-
-      status "Pruning cached dependencies not specified in package.json"
-      pushd "$build_dir/$(dirname "$line")" >/dev/null; npm prune 2>&1 | indent; popd >/dev/null
-    fi
-  done
-fi
 
 # Scope config var availability only to `npm install`
 (
@@ -171,35 +111,9 @@ if [ -f "$build_dir/Gruntfile.js" -a -f "$build_dir/node_modules/.bin/grunt" ]; 
   $build_dir/node_modules/.bin/grunt $grunt_options build 2>&1 | indent
 fi
 
-installed_node_modules_dirs="$(cd "$build_dir" >/dev/null && find . \( -type l -or -type d \) -name node_modules -not -path '*/node_modules/*' -not -path './vendor/*' | cut -c 3-)"
-
-echo "$installed_node_modules_dirs" | while read line
-do
-  if [ ! -d "$cache_dir/$line" -o "$SYMLINK_CACHES" != "y" ]; then
-    status "Caching $line for future builds"
-    mkdir -p "$cache_dir/$line" && rsync -a --delete "$build_dir/$line/" "$cache_dir/$line/"
-  else
-    status "Copying cached $line to build directory"
-    rm "$build_dir/$line" 2>/dev/null && cp -r "$cache_dir/$line" "$build_dir/$line" || status "failed"
-  fi
-done
-
-if [ "$SYMLINK_CACHES" != "y" ]; then
-  if [ -d $build_dir/.npm ]; then
-    echo "-----> Caching npm cache directory for future builds"
-    mkdir -p $cache_dir/.npm && rsync -a --delete $build_dir/.npm/ $cache_dir/.npm/
-  fi
-
-  if [ -d $HOME/.cache/bower ]; then
-    echo "-----> Caching bower cache directory for future builds"
-    mkdir -p $cache_dir/.cache/bower && rsync -a --delete $HOME/.cache/bower/ $cache_dir/.cache/bower/
-  fi
-fi
-
 status "Cleaning up node-gyp and npm artifacts"
 rm -rf "$build_dir/.node-gyp"
 rm -rf "$build_dir/.npm"
-rm -rf "$HOME/.cache/bower"
 
 status "Cleaning up temporary files"
 trap - INT TERM EXIT
